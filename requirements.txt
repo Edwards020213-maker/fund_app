@@ -5,3 +5,4 @@ akshare
 tqdm
 lxml
 beautifulsoup4
+extra-streamlit-components
