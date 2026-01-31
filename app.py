@@ -169,39 +169,55 @@ def analyze_fund_profit_by_amount(fund_code, holding_amount):
 # --- 3. Streamlit 界面 ---
 st.set_page_config(page_title="基金估值Pro", page_icon="💰", layout="wide")
 
-# ================= 🍪 Cookie 管理器 (最终修复版) =================
-# [Fix] 去除 @st.cache_resource 装饰器，直接实例化
-# 这解决了 CachedWidgetWarning 问题，并兼容所有 Streamlit 版本
-cookie_manager = stx.CookieManager()
+# ================= 🍪 Cookie 管理器 (修复版) =================
+# key="cookie_manager" 确保每次重运行ID一致，避免组件闪烁
+cookie_manager = stx.CookieManager(key="cookie_mgr")
 
-# 获取 Cookie 数据
-time.sleep(0.1) # 稍微暂停，确保 CookieManager 加载
-cookie_data = cookie_manager.get("my_fund_portfolio_v1")
-# ================================================================
+# 1. 尝试获取 Cookie
+cookie_data_json = cookie_manager.get("my_fund_portfolio_v20")
+vip_status = cookie_manager.get("vip_status")
 
+# 2. 默认数据定义
+DEFAULT_DATA = [
+    {"代码": "013403", "持仓金额": 10000.50, "备注": "演示持仓"},
+    {"代码": "005827", "持仓金额": 0.00, "备注": "演示观察"},
+]
+
+# 3. 初始化 Session State
 if "fund_data" not in st.session_state:
-    if cookie_data:
-        try:
-            st.session_state.fund_data = pd.DataFrame(json.loads(cookie_data))
-        except:
-            st.session_state.fund_data = pd.DataFrame([{"代码": "013403", "持仓金额": 10000.00, "备注": "演示持仓"}])
-    else:
-        # 默认数据
-        st.session_state.fund_data = pd.DataFrame([
-            {"代码": "013403", "持仓金额": 10000.50, "备注": "演示持仓"},
-            {"代码": "005827", "持仓金额": 0.00, "备注": "演示观察"},
-        ])
+    st.session_state.fund_data = pd.DataFrame(DEFAULT_DATA)
 
+# 4. [核心修复] 自动同步逻辑
+# 如果 Cookie 有数据，且我们还没标记“已同步”，则强制加载一次
+if cookie_data_json and "data_synced" not in st.session_state:
+    try:
+        st.session_state.fund_data = pd.DataFrame(json.loads(cookie_data_json))
+        st.session_state.data_synced = True # 标记为已同步
+        st.rerun() # 强制刷新页面显示新数据
+    except:
+        pass
+
+# 5. VIP 状态自动加载
 if "vip_unlocked" not in st.session_state:
-    vip_cookie = cookie_manager.get("vip_status")
-    st.session_state.vip_unlocked = True if vip_cookie == "unlocked" else False
+    st.session_state.vip_unlocked = True if vip_status == "unlocked" else False
 
-st.markdown("### 💰 基金实盘估值 V19.2")
+st.markdown("### 💰 基金实盘估值 V20.0")
 st.caption("全能版：支持股票/ETF/QDII | 🚀 输入本金，一键计算今日盈亏")
 
 with st.expander("📝 编辑持仓 (支持粘贴Excel)", expanded=True):
-    col1, col2 = st.columns([3, 1])
-    with col2:
+    col_a, col_b = st.columns([3, 1])
+    
+    # 增加手动读取按钮，防止自动同步失败
+    with col_b:
+        if st.button("📥 读取云端存档", help="如果刷新后数据消失，请点我"):
+            c_data = cookie_manager.get("my_fund_portfolio_v20")
+            if c_data:
+                st.session_state.fund_data = pd.DataFrame(json.loads(c_data))
+                st.session_state.data_synced = True
+                st.rerun()
+            else:
+                st.warning("暂无存档记录")
+        
         if st.button("🗑️ 清空表格"):
             st.session_state.fund_data = pd.DataFrame([{"代码": "", "持仓金额": 0.00, "备注": ""}])
             st.rerun()
@@ -222,10 +238,14 @@ with st.expander("📝 编辑持仓 (支持粘贴Excel)", expanded=True):
         use_container_width=True
     )
     
+    # 保存按钮
     if st.button("💾 保存当前配置 (下次自动加载)", use_container_width=True):
         json_str = edited_df.to_json(orient="records")
-        cookie_manager.set("my_fund_portfolio_v1", json_str, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
-        st.toast("✅ 配置已保存！下次打开会自动加载。", icon="💾")
+        # 写入 Cookie，有效期 30 天
+        cookie_manager.set("my_fund_portfolio_v20", json_str, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+        st.toast("✅ 配置已保存！刷新页面也不会丢失了。", icon="💾")
+        # 同时标记已同步，防止保存后立刻被旧逻辑覆盖
+        st.session_state.data_synced = True 
 
 start_calc = st.button("🚀 开始估值", type="primary", use_container_width=True)
 
